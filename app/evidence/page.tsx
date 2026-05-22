@@ -249,7 +249,7 @@ export default function EvidenceIntelligencePage() {
                         ))}
                         {group.items.length === 0 && (
                           <div className="text-center py-4 text-[#8c90a1] text-xs">
-                            No evidence items yet. Click "AI Recommend" to generate requirements.
+                            No evidence items yet. Click &quot;AI Recommend&quot; to generate requirements.
                           </div>
                         )}
                       </div>

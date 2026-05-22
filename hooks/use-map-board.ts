@@ -69,7 +69,7 @@ export function useMapBoard(): UseMapBoardResult {
     // Fetch evidence for all obligations referenced by map cards
     const obligationIds = (cards ?? []).map((c: Record<string, unknown>) => c.obligation_id as string).filter(Boolean);
     
-    let evidenceByObligation: Record<string, EvidenceItem[]> = {};
+    const evidenceByObligation: Record<string, EvidenceItem[]> = {};
     
     if (obligationIds.length > 0) {
       const { data: evidenceData } = await supabase

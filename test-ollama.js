@@ -1,4 +1,4 @@
-const http = require("node:http");
+import http from "node:http";
 
 const MODEL = process.argv[2] || "qwen2.5:1.5b";
 console.log("Testing Ollama streaming with model:", MODEL);
