@@ -16,7 +16,7 @@
 
 > An autonomous, AI-driven platform that transforms raw regulatory PDFs into tracked obligations, evidence vaults, risk scores, and board-ready compliance reports — in real time.
 
-[Live Demo](#) · [Report Bug](https://github.com/nitinprajwal/surakshaos/issues) · [Request Feature](https://github.com/nitinprajwal/surakshaos/issues)
+[Live Demo](https://surakshaos.nitinr.me) · [Report Bug](https://github.com/nitinprajwal/surakshaos/issues) · [Request Feature](https://github.com/nitinprajwal/surakshaos/issues)
 
 </div>
 
@@ -56,7 +56,7 @@ Upload a regulatory PDF → the AI extracts every compliance obligation in secon
 ```
 Regulatory Circular (PDF)
         ↓
-  AI Text Extraction (Ollama LLM)
+  AI Text Extraction (LiteLLM proxy · or · local Ollama)
         ↓
   Obligations Parsed & Classified
         ↓
@@ -82,7 +82,7 @@ Regulatory Circular (PDF)
 
 | Feature | Description |
 |---|---|
-| 📄 **Document Intake & AI Extraction** | Upload PDFs → Ollama LLM extracts obligations with title, department, priority, due date, and confidence score |
+| 📄 **Document Intake & AI Extraction** | Upload PDFs → LiteLLM proxy (or local Ollama fallback) extracts obligations with title, department, priority, due date, and confidence score |
 | 📋 **Obligations Repository** | Full CRUD registry of all compliance obligations with status tracking and department filtering |
 | 🗂️ **MAP Board** | Kanban-style Mitigation Action Plan board — link tasks directly to obligations |
 | 🔍 **Evidence Management** | Per-obligation evidence vaults with AI gap detection and collection tracking |
@@ -118,10 +118,11 @@ Regulatory Circular (PDF)
 - **Database Triggers** — Auto `updated_at` maintenance on all mutable tables
 
 ### AI & Intelligence
-- **[Ollama](https://ollama.com)** (local) — LLM inference for obligation extraction (`qwen2.5:1.5b` / `llama3.1`)
+- **[LiteLLM](https://litellm.ai)** proxy at `https://litellm.nitinr.me` — OpenAI-compatible gateway (primary when `OPENAI_BASE_URL` + `OPENAI_API_KEY` are set)
+- **[Ollama](https://ollama.com)** (local) — offline LLM fallback (`qwen2.5:1.5b` / `llama3.1`) when LiteLLM is not configured
 - **[pdf-parse](https://www.npmjs.com/package/pdf-parse)** — PDF text extraction
 - **Jaccard Similarity** — Regulatory drift detection algorithm
-- **[Groq SDK](https://groq.com)** / **[OpenAI SDK](https://openai.com)** — Available for cloud LLM fallback
+- **[OpenAI SDK v6](https://github.com/openai/openai-node)** — Used to talk to the LiteLLM proxy
 
 ### State & Utilities
 - **[Zustand](https://zustand-demo.pmnd.rs)** — Global state management
@@ -185,7 +186,8 @@ Regulatory Circular (PDF)
 |---|---|---|
 | Node.js | ≥ 18.x | [Download](https://nodejs.org) |
 | npm | ≥ 9.x | Comes with Node.js |
-| Ollama | Latest | [Download](https://ollama.com/download) — for local AI |
+| LiteLLM proxy | — | `OPENAI_BASE_URL=https://litellm.nitinr.me` — no local install needed |
+| Ollama | Latest | [Download](https://ollama.com/download) — only needed if LiteLLM is not configured |
 | Supabase account | — | [Free tier](https://supabase.com) works perfectly |
 
 ### Installation
@@ -215,7 +217,7 @@ ollama pull llama3.1
 
 ### Environment Variables
 
-Copy the example environment file and fill in your Supabase credentials:
+Copy the example environment file and fill in your Supabase and AI credentials:
 
 ```bash
 cp .env.local.example .env.local
@@ -237,6 +239,10 @@ NEXT_PUBLIC_SUPABASE_DOCUMENTS_BUCKET=compliance-documents
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:1.5b
 
+# OpenAI-compatible fallback via LiteLLM proxy
+OPENAI_BASE_URL=https://litellm.nitinr.me
+OPENAI_API_KEY=<your-proxy-api-key>
+
 # Set to 2 for quick testing, 0 for full document extraction
 OLLAMA_MAX_CHUNKS=2
 ```
@@ -245,6 +251,11 @@ OLLAMA_MAX_CHUNKS=2
 > 1. Go to [supabase.com](https://supabase.com) → Your Project
 > 2. Settings → API
 > 3. Copy the **URL**, **anon public** key, and **service_role secret** key
+
+> **LiteLLM/OpenAI-compatible endpoint:**
+> - Point `OPENAI_BASE_URL` at `https://litellm.nitinr.me`
+> - Use your proxy/API key in `OPENAI_API_KEY`
+> - The OpenAI SDK can then talk to this endpoint without code changes
 
 ### Running the App
 
@@ -432,6 +443,11 @@ Distributed under the MIT License. See `LICENSE` for more information.
 </div>
 
 ## Deploy on Vercel
+
+The app is currently configured to run behind the local domain-management/Nginx setup at:
+
+- `https://surakshaos.nitinr.me`
+- local upstream: `http://127.0.0.1:3003`
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 

@@ -1,17 +1,18 @@
 /**
  * Obligation Extraction Service
  *
- * Sends regulatory document text to a local Ollama instance and parses the
- * structured JSON response into typed ExtractedObligation objects.
+ * Extracts compliance obligations from regulatory document text using either:
+ *   1. OpenAI-compatible LiteLLM proxy (primary) — set OPENAI_BASE_URL + OPENAI_API_KEY
+ *   2. Local Ollama instance (fallback)           — set OLLAMA_BASE_URL + OLLAMA_MODEL
  *
- * SERVER-ONLY - runs against the local Ollama server (http://localhost:11434).
- * No API key required. No rate limits. Runs 100% offline.
+ * SERVER-ONLY — never imported by browser components.
  *
- * Ollama must be running: `ollama serve`
- * Model must be pulled:   `ollama pull llama3.1`
+ * LiteLLM setup:  OPENAI_BASE_URL=https://litellm.nitinr.me  OPENAI_API_KEY=<key>
+ * Ollama setup:   ollama serve && ollama pull qwen2.5:1.5b
  */
 
 import * as http from "node:http";
+import OpenAI from "openai";
 import type {
   ExtractedObligation,
   ExtractionResult,
@@ -23,14 +24,26 @@ import type {
 // Config
 // ---------------------------------------------------------------------------
 
+// ── OpenAI-compatible / LiteLLM (primary when both vars are set) ───────────
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// Model name sent to the LiteLLM proxy (must match a configured model on the proxy).
+const OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+
+// Use LiteLLM when both OPENAI_BASE_URL and a real (non-placeholder) OPENAI_API_KEY are present.
+const USE_LITELLM =
+  Boolean(OPENAI_BASE_URL) &&
+  Boolean(OPENAI_API_KEY) &&
+  OPENAI_API_KEY !== "<your-proxy-api-key>";
+
+// ── Ollama (fallback when LiteLLM is not configured) ──────────────────────
 const OLLAMA_BASE_URL =
   process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 
 // qwen2.5:1.5b is ~986MB, runs at ~15-20 tok/sec on CPU (vs llama3.1 at ~3 tok/sec).
-// Excellent at structured JSON output. Override with OLLAMA_MODEL env var.
 const DEFAULT_MODEL = process.env.OLLAMA_MODEL ?? "qwen2.5:1.5b";
 
-// Chunk size: 3K chars = fewer obligations per chunk = faster per-chunk output (~3-5 min on CPU).
+// Chunk size: 3K chars = fewer obligations per chunk = faster per-chunk output.
 const MAX_CHARS_PER_CHUNK = 3_000;
 const MAX_INPUT_CHARS = 400_000;
 // Limit how many chunks to process. 0 = unlimited. Set OLLAMA_MAX_CHUNKS=2 for quick tests.
@@ -107,6 +120,41 @@ function sanitizeObligation(raw: Record<string, unknown>): ExtractedObligation {
       ? raw.compliance_risk
       : "medium") as ExtractionRisk,
   };
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI-compatible / LiteLLM API call
+// ---------------------------------------------------------------------------
+
+// Lazily instantiated so the module can load even when env vars are absent.
+let _openaiClient: OpenAI | null = null;
+function getOpenAIClient(): OpenAI {
+  if (!_openaiClient) {
+    _openaiClient = new OpenAI({
+      baseURL: OPENAI_BASE_URL,
+      apiKey: OPENAI_API_KEY,
+    });
+  }
+  return _openaiClient;
+}
+
+interface LLMMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+async function callLiteLLM(messages: LLMMessage[]): Promise<string> {
+  const client = getOpenAIClient();
+  const response = await client.chat.completions.create({
+    model: OPENAI_MODEL,
+    messages,
+    temperature: 0.1,
+    max_tokens: 2048,
+    response_format: { type: "json_object" },
+  });
+  const content = response.choices[0]?.message?.content ?? "";
+  if (!content) throw new Error("LiteLLM returned empty content");
+  return content;
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +323,11 @@ function tryRecoverTruncatedJson(raw: string): Record<string, unknown> | null {
 export interface ExtractionOptions {
   /** Maximum obligations to return. @default 200 */
   maxObligations?: number;
-  /** Override Ollama model. @default process.env.OLLAMA_MODEL ?? "llama3.1" */
+  /**
+   * Override the model name.
+   * - When USE_LITELLM is true, this overrides OPENAI_MODEL.
+   * - When using Ollama, this overrides OLLAMA_MODEL.
+   */
   model?: string;
 }
 
@@ -286,7 +338,10 @@ export interface ExtractionOptions {
 export const extractionService = {
   /**
    * Extract compliance obligations from plain regulatory document text.
-   * Uses local Ollama - no API key, no rate limits, runs entirely offline.
+   *
+   * Routing:
+   *   - If OPENAI_BASE_URL + OPENAI_API_KEY are set → uses LiteLLM proxy (OpenAI-compatible)
+   *   - Otherwise → uses local Ollama (OLLAMA_BASE_URL / OLLAMA_MODEL)
    */
   async extractObligations(
     text: string,
@@ -294,8 +349,14 @@ export const extractionService = {
     options: ExtractionOptions = {}
   ): Promise<ExtractionResult> {
     const startTime = Date.now();
-    const model = options.model ?? DEFAULT_MODEL;
+    const model = options.model ?? (USE_LITELLM ? OPENAI_MODEL : DEFAULT_MODEL);
     const maxObligations = options.maxObligations ?? 200;
+
+    if (USE_LITELLM) {
+      console.log(`[extraction] Using LiteLLM proxy at ${OPENAI_BASE_URL} with model=${model}`);
+    } else {
+      console.log(`[extraction] Using local Ollama at ${OLLAMA_BASE_URL} with model=${model}`);
+    }
 
     const clampedText = text.length > MAX_INPUT_CHARS ? text.slice(0, MAX_INPUT_CHARS) : text;
 
@@ -334,10 +395,13 @@ export const extractionService = {
         `Return a JSON object with exactly these top-level keys: ` +
         `"regulation_name", "jurisdiction", "document_summary", "obligations".`;
 
-      const rawContent = await callOllama(model, [
+      const messages: LLMMessage[] = [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
-      ]);
+      ];
+      const rawContent = USE_LITELLM
+        ? await callLiteLLM(messages)
+        : await callOllama(model, messages);
 
       let parsed: Record<string, unknown>;
       try {
